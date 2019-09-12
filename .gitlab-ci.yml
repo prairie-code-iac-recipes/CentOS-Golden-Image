@@ -1,0 +1,110 @@
+# -----------------------------------------------------------------------------
+# Secret Unversioned Variables Defined in Gitlab
+# -----------------------------------------------------------------------------
+# AWS_ACCESS_KEY_ID
+# AWS_SECRET_ACCESS_KEY
+# DVS_PORT_GROUP_ID
+# DVS_SWITCH_ID
+# ESX_DATASTORE
+# ESX_HOST
+# ESX_PASSWORD
+# ESX_USERNAME
+# GITLAB_TOKEN
+# SSH_PUBLIC_KEY
+# HTTP_IP
+# TEMPLATE_PASSWORD
+# TEMPLATE_ROOT_PASSWORD
+# TEMPLATE_USERGROUP
+# TEMPLATE_USERNAME
+# VCENTER_DATACENTER
+# VCENTER_HOST
+# VCENTER_PASSWORD
+# VCENTER_USERNAME
+
+stages:
+  - validate
+  - setup
+  - build
+  - cleanup
+
+variables:
+  AWS_BUCKET: 'io.salte.packer-cache'
+  AWS_REGION: 'us-east-1'
+  CENTOS_VERSION: "7-1810"
+  ISO_CHECKSUM: '38d5d51d9d100fd73df031ffd6bd8b1297ce24660dc8c13a3b8b4534a4bd291c'
+  ISO_CHECKSUM_TYPE: 'sha256'
+  ISO_URL: 'http://mirrors.ocf.berkeley.edu/centos/7/isos/x86_64/CentOS-7-x86_64-Minimal-1810.iso'
+  TEMPLATE_CPU_COUNT: 2
+  TEMPLATE_DISK_KB: 10240
+  TEMPLATE_MEMORY_KB: 2048
+
+Validate Packer Template:
+  stage: validate
+  image:
+    name: salte/packer:latest
+    entrypoint: [""]
+  variables:
+    PACKER_LOG: 1
+    PACKER_LOG_PATH: "packer.log"
+    TEMPLATE_PUBLIC_KEY_FILE: "/dev/null"
+  script:
+    - cd src
+    - packer validate centos.json
+  artifacts:
+    when: on_failure
+    paths:
+      - src/packer.log
+
+Setup Kickstart File:
+  stage: setup
+  image: docker:19.03.0-dind
+  script:
+    - cd src
+    - CONTAINER_ID=$(docker run -d --rm -P nginx:1.17.2-alpine)
+    - sed "s/ROOT_PASSWORD_PLACEHOLDER/${TEMPLATE_ROOT_PASSWORD}/g" boot/boot-template.cfg > boot/boot.cfg
+    - sed -i "s/USERNAME_PLACEHOLDER/${TEMPLATE_USERNAME}/g" boot/boot.cfg
+    - sed -i "s/PASSWORD_PLACEHOLDER/${TEMPLATE_PASSWORD}/g" boot/boot.cfg
+    - sed -i "s/GROUP_PLACEHOLDER/${TEMPLATE_USERGROUP}/g" boot/boot.cfg
+    - docker cp boot/boot.cfg ${CONTAINER_ID}:/usr/share/nginx/html
+    - apk add jq
+    - docker inspect ${CONTAINER_ID}|jq .[0].NetworkSettings.Ports|jq '.["80/tcp"]'|jq --raw-output .[0].HostPort > HTTP_PORT
+    - echo ${CONTAINER_ID} > CONTAINER_ID
+  artifacts:
+    paths:
+      - src/HTTP_PORT
+      - src/CONTAINER_ID
+  only:
+    - master
+
+Cleanup Kickstart File:
+  stage: cleanup
+  image: docker:19.03.0-dind
+  script:
+    - cd src
+    - CONTAINER_ID=$(cat CONTAINER_ID)
+    - if [ ! -z ${CONTAINER_ID} ]; then docker stop ${CONTAINER_ID}; fi
+  when: always
+  only:
+    - master
+
+Build and Publish Image:
+  stage: build
+  image:
+    name: salte/packer:latest
+    entrypoint: [""]
+  variables:
+    PACKER_LOG: 1
+    PACKER_LOG_PATH: "packer.log"
+  script:
+    - cd src
+    - export HTTP_PORT=$(cat HTTP_PORT)
+    - export TEMPLATE_DESCRIPTION=$(echo ${CI_COMMIT_MESSAGE} | sed -E 's,\\t|\\r|\\n,,g')
+    - echo $SSH_PUBLIC_KEY | base64 --decode > /tmp/id_rsa.pub
+    - export TEMPLATE_PUBLIC_KEY_FILE=/tmp/id_rsa.pub
+    - packer build -force centos.json
+  artifacts:
+    when: on_failure
+    paths:
+      - src/packer.log
+  only:
+    - master

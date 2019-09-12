@@ -1,0 +1,6 @@
+aws-role
+boot/boot.cfg
+output-vmware-iso
+packer_cache
+*.log
+local_only

@@ -1,0 +1,139 @@
+{
+  "variables": {
+    "AWS_ACCESS_KEY": "{{env `AWS_ACCESS_KEY`}}",
+    "AWS_BUCKET": "{{env `AWS_BUCKET`}}",
+    "AWS_REGION": "{{env `AWS_REGION`}}",
+    "AWS_SECRET_KEY": "{{env `AWS_SECRET_KEY`}}",
+    "DVS_PORT_GROUP_ID": "{{env `DVS_PORT_GROUP_ID`}}",
+    "DVS_SWITCH_ID": "{{env `DVS_SWITCH_ID`}}",
+    "ESX_DATASTORE": "{{env `ESX_DATASTORE`}}",
+    "ESX_HOST": "{{env `ESX_HOST`}}",
+    "ESX_PASSWORD": "{{env `ESX_PASSWORD`}}",
+    "ESX_USERNAME": "{{env `ESX_USERNAME`}}",
+    "HTTP_IP": "{{env `HTTP_IP`}}",
+    "HTTP_PORT": "{{env `HTTP_PORT`}}",
+    "ISO_CHECKSUM": "{{env `ISO_CHECKSUM`}}",
+    "ISO_CHECKSUM_TYPE": "{{env `ISO_CHECKSUM_TYPE`}}",
+    "ISO_URL": "{{env `ISO_URL`}}",
+    "TEMPLATE_CPU_COUNT": "{{env `TEMPLATE_CPU_COUNT`}}",
+    "TEMPLATE_DESCRIPTION": "{{env `TEMPLATE_DESCRIPTION`}}",
+    "TEMPLATE_DISK_KB": "{{env `TEMPLATE_DISK_KB`}}",
+    "TEMPLATE_MEMORY_KB": "{{env `TEMPLATE_MEMORY_KB`}}",
+    "TEMPLATE_NAME": "linux-centos-{{env `CENTOS_VERSION`}}-{{env `CI_COMMIT_SHORT_SHA`}}",
+    "TEMPLATE_PASSWORD": "{{env `TEMPLATE_PASSWORD`}}",
+    "TEMPLATE_PUBLIC_KEY_FILE": "{{env `TEMPLATE_PUBLIC_KEY_FILE`}}",
+    "TEMPLATE_USERNAME": "{{env `TEMPLATE_USERNAME`}}",
+    "TEMPLATE_USERGROUP": "{{env `TEMPLATE_USERGROUP`}}",
+    "VCENTER_DATACENTER": "{{env `VCENTER_DATACENTER`}}",
+    "VCENTER_HOST": "{{env `VCENTER_HOST`}}",
+    "VCENTER_PASSWORD": "{{env `VCENTER_PASSWORD`}}",
+    "VCENTER_USERNAME": "{{env `VCENTER_USERNAME`}}"
+  },
+  "provisioners": [
+    {
+      "type": "shell",
+      "execute_command": "echo {{user `TEMPLATE_PASSWORD`}} | {{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "script": "scripts/setup.sh",
+      "environment_vars": [
+        "ssh_username={{user `TEMPLATE_USERNAME`}}"
+      ]
+    },
+    {
+      "type": "shell",
+      "execute_command": "echo {{user `TEMPLATE_PASSWORD`}} | {{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "script": "scripts/setup-vmware.sh",
+      "only": [
+        "vmware-iso"
+      ]
+    },
+    {
+      "type": "shell",
+      "execute_command": "echo {{user `TEMPLATE_PASSWORD`}} | {{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "script": "scripts/cleanup.sh"
+    },
+    {
+      "type": "file",
+      "source": "{{user `TEMPLATE_PUBLIC_KEY_FILE`}}",
+      "destination": "/tmp/id_rsa.pub"
+    },
+    {
+      "type": "file",
+      "source": "files/sshd_config",
+      "destination": "/tmp/sshd_config"
+    },
+    {
+      "type": "shell",
+      "execute_command": "echo {{user `TEMPLATE_PASSWORD`}} | {{.Vars}} sudo -S -E bash '{{.Path}}'",
+      "inline": [
+        "mkdir -p /home/{{user `TEMPLATE_USERNAME`}}/.ssh",
+        "chmod 700 /home/{{user `TEMPLATE_USERNAME`}}/.ssh",
+        "cat /tmp/id_rsa.pub >> /home/{{user `TEMPLATE_USERNAME`}}/.ssh/authorized_keys",
+        "chmod 644 /home/{{user `TEMPLATE_USERNAME`}}/.ssh/authorized_keys",
+        "chown -R {{user `TEMPLATE_USERNAME`}} /home/{{user `TEMPLATE_USERNAME`}}/.ssh",
+        "chgrp -R {{user `TEMPLATE_USERGROUP`}} /home/{{user `TEMPLATE_USERNAME`}}/.ssh",
+        "cp /tmp/sshd_config /etc/ssh/sshd_config",
+        "chmod 600 /etc/ssh/sshd_config",
+        "chown root /etc/ssh/sshd_config",
+        "chgrp root /etc/ssh/sshd_config",
+        "rm /tmp/id_rsa.pub",
+        "rm /tmp/sshd_config"
+      ]
+    }
+  ],
+  "builders": [
+    {
+      "type": "vmware-iso",
+      "iso_url": "{{user `ISO_URL`}}",
+      "iso_checksum": "{{user `ISO_CHECKSUM`}}",
+      "iso_checksum_type": "{{user `ISO_CHECKSUM_TYPE`}}",
+      "ssh_username": "{{user `TEMPLATE_USERNAME`}}",
+      "ssh_password": "{{user `TEMPLATE_PASSWORD`}}",
+      "ssh_wait_timeout": "15m",
+      "shutdown_command": "echo {{user `TEMPLATE_USERNAME`}}|sudo -S /sbin/halt -h -p",
+      "boot_command": [
+        "<tab> text ks=http://{{user `HTTP_IP`}}:{{user `HTTP_PORT`}}/boot.cfg<enter><wait>"
+      ],
+      "boot_wait": "10s",
+      "disk_size": "{{user `TEMPLATE_DISK_KB`}}",
+      "guest_os_type": "centos-64",
+      "headless": true,
+      "http_directory": "boot",
+      "cpus": "{{user `TEMPLATE_CPU_COUNT`}}",
+      "memory": "{{user `TEMPLATE_MEMORY_KB`}}",
+      "keep_registered": true,
+      "skip_export": false,
+      "vm_name": "{{user `TEMPLATE_NAME`}}",
+      "vnc_disable_password": "true",
+      "remote_datastore": "{{user `ESX_DATASTORE`}}",
+      "remote_type": "esx5",
+      "remote_username": "{{user `ESX_USERNAME`}}",
+      "remote_password": "{{user `ESX_PASSWORD`}}",
+      "remote_host": "{{user `ESX_HOST`}}",
+      "vmx_data": {
+        "ethernet0.dvs.switchId": "{{user `DVS_SWITCH_ID`}}",
+        "ethernet0.dvs.portgroupid": "{{user `DVS_PORT_GROUP_ID`}}"
+      },
+      "format": "ova"
+    }
+  ],
+  "post-processors": [
+    {
+      "type": "vsphere-template",
+      "host": "{{user `VCENTER_HOST`}}",
+      "insecure": true,
+      "username": "{{user `VCENTER_USERNAME`}}",
+      "password": "{{user `VCENTER_PASSWORD`}}",
+      "datacenter": "{{user `VCENTER_DATACENTER`}}"
+    },
+    {
+      "type": "amazon-import",
+      "ami_name": "{{user `TEMPLATE_NAME`}}",
+      "ami_description": "{{user `TEMPLATE_DESCRIPTION`}}",
+      "access_key": "{{user `AWS_ACCESS_KEY`}}",
+      "secret_key": "{{user `AWS_SECRET_KEY`}}",
+      "region": "{{user `AWS_REGION`}}",
+      "s3_bucket_name": "{{user `AWS_BUCKET`}}",
+      "license_type": "BYOL"
+    }
+  ]
+}
